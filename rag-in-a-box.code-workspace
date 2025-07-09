@@ -1,0 +1,26 @@
+{
+	"folders": [
+		{
+			"path": "./encoder",
+			"name": "📦 Encoder"
+		},
+		{
+			"path": "./orchestrator",
+			"name": "📦 Orchestrator"
+		},
+		{
+			"path": "./scripts",
+			"name": "📜 Scripts"
+		},
+		{
+			"path": ".",
+			"name": "🫚 Root"
+		},
+	],
+	"settings": {},
+	"tasks": {
+		"version": "2.0.0",
+		"tasks": [
+		]
+	}
+}
