@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import uuid
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -8,10 +9,13 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
 
-app = FastAPI()
-qdrant_client = QdrantClient(url="http://localhost:6333")
-
+QDRANT_URL = os.environ.get('QDRANT_URL', "http://localhost:6333")
 QDRANT_COLLECTION_NAME = "test"
+ENCODER_URL = os.environ.get('ENCODER_URL', "http://localhost:8001")
+OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
+
+qdrant_client = QdrantClient(url=QDRANT_URL)
+
 
 if not qdrant_client.collection_exists(QDRANT_COLLECTION_NAME):
     qdrant_client.create_collection(
@@ -28,9 +32,11 @@ class AskRequest(BaseModel):
 class AskResponse(BaseModel):
     answer: str
 
+app = FastAPI()
+
 @app.post("/submit-document")
 async def submit_document(request_body: SubmitDocumentRequest):
-    encoder_response = httpx.post('http://localhost:8001/encode', 
+    encoder_response = httpx.post(f'{ENCODER_URL}/encode', 
         json={"text": request_body.document}, 
     ).json()
 
@@ -48,7 +54,7 @@ async def submit_document(request_body: SubmitDocumentRequest):
 
 @app.post("/ask")
 async def ask(request_body: AskRequest) -> AskResponse:
-    encoder_response = httpx.post('http://localhost:8001/encode', 
+    encoder_response = httpx.post(f'{ENCODER_URL}/encode', 
         json={"text": request_body.query}, 
     ).json()
 
@@ -74,7 +80,6 @@ async def ask(request_body: AskRequest) -> AskResponse:
 
     print(context)
 
-    OLLAMA_URL = "http://localhost:11434/api/generate"
     payload = {
         "model": "smollm",
         "prompt":
@@ -88,7 +93,7 @@ async def ask(request_body: AskRequest) -> AskResponse:
 
     answer = ""
 
-    with httpx.stream(method="POST", url=OLLAMA_URL, json=payload) as response:
+    with httpx.stream(method="POST", url=f"{OLLAMA_URL}/api/generate", json=payload) as response:
         for line in response.iter_lines():
             if line:
                 answer += json.loads(line)['response']

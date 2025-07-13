@@ -1,12 +1,12 @@
 
 from fastapi import FastAPI
 from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 
 
 app = FastAPI()
 
-model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+model = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
 
 class EncodeRequest(BaseModel):
     text: str
@@ -18,9 +18,5 @@ class EncodeResponse(BaseModel):
 
 @app.post('/encode')
 async def encode(request_body: EncodeRequest) -> EncodeResponse:
-    embedding = (
-        model
-        .encode(request_body.text, convert_to_numpy=True)
-        .tolist()
-    )
+    embedding = next(iter(model.embed(request_body.text))).tolist()
     return {'embedding': embedding}
