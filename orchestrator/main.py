@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 import hashlib
 import json
 import os
@@ -14,14 +15,20 @@ QDRANT_COLLECTION_NAME = "test"
 ENCODER_URL = os.environ.get('ENCODER_URL', "http://localhost:8001")
 OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
 
-qdrant_client = QdrantClient(url=QDRANT_URL)
+qdrant_client: QdrantClient | None = None
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global qdrant_client
+    qdrant_client = QdrantClient(url=QDRANT_URL)
 
-if not qdrant_client.collection_exists(QDRANT_COLLECTION_NAME):
-    qdrant_client.create_collection(
-        collection_name=QDRANT_COLLECTION_NAME,
-        vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-    )
+    if not qdrant_client.collection_exists(QDRANT_COLLECTION_NAME):
+        qdrant_client.create_collection(
+            collection_name=QDRANT_COLLECTION_NAME,
+            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+        )
+    yield
+    qdrant_client.close()
 
 class SubmitDocumentRequest(BaseModel):
     document: str
@@ -32,7 +39,7 @@ class AskRequest(BaseModel):
 class AskResponse(BaseModel):
     answer: str
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 @app.post("/submit-document")
 async def submit_document(request_body: SubmitDocumentRequest):

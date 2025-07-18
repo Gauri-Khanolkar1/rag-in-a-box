@@ -7,7 +7,17 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8001:8001"
-
+  ingestion-api:
+    build:
+      context: ./ingestion-api
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_HOST=rabbitmq
   orchestrator:
     build:
       context: ./orchestrator
@@ -16,6 +26,7 @@ services:
       - "8000:8000"
     depends_on:
       - qdrant
+      - ollama
     environment:
       - QDRANT_URL=http://qdrant:6333
       - ENCODER_URL=http://encoder:8001
@@ -28,7 +39,6 @@ services:
       - "6334:6334" # Qdrant gRPC port (optional, but recommended for some clients)
     volumes:
       - qdrant_storage:/qdrant/storage
-
   ollama:
     image: ollama/ollama
     volumes:
@@ -36,10 +46,25 @@ services:
     ports:
       - "11434:11434" # Expose Ollama API port
     restart: always
-
-  
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine # Specifies the RabbitMQ image with management plugin
+    hostname: rabbitmq # Sets the hostname of the RabbitMQ container
+    ports:
+      - "5672:5672" # Maps RabbitMQ's default port for client connections
+      - "15672:15672" # Maps RabbitMQ Management UI port
+    environment:
+      RABBITMQ_DEFAULT_USER: guest # Sets the default username
+      RABBITMQ_DEFAULT_PASS: guest # Sets the default password
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq # Persists RabbitMQ data
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
 
 volumes:
   qdrant_storage:
   ollama_data:
-  
+  rabbitmq_data:

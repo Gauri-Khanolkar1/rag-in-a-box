@@ -1,12 +1,16 @@
 {
 	"folders": [
 		{
+			"path": "./orchestrator",
+			"name": "📦 Orchestrator"
+		},
+		{
 			"path": "./encoder",
 			"name": "📦 Encoder"
 		},
 		{
-			"path": "./orchestrator",
-			"name": "📦 Orchestrator"
+			"path": "./ingestion-api",
+			"name": "📦 Ingestion"
 		},
 		{
 			"path": "./scripts",
@@ -21,6 +25,34 @@
 	"tasks": {
 		"version": "2.0.0",
 		"tasks": [
+			{
+				"label": "build & start",
+				"type": "shell",
+				"command": "docker compose up --build -d",
+				"group": "build",
+			},
+			{
+				"label": "start",
+				"type": "shell",
+				"command": "docker compose up -d",
+				"group": "build",
+			},
+			{
+				"label": "clean",
+				"type": "shell",
+				"command": "docker compose down",
+				"group": "build",
+			},
+			{
+				"label": "clean & build & start",
+				"type": "shell",
+				"group": "build",
+				"dependsOn": [
+					"clean",
+					"build & start"
+				],
+				"dependsOrder": "sequence"
+			}
 		]
 	}
 }
