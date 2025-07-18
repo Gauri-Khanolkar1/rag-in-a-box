@@ -1,17 +1,15 @@
-# rag-in-a-box
+# RAG-in-a-Box
 
-A modular Retrieval-Augmented Generation (RAG) system with separate microservices for encoding and orchestration.
+A modular Retrieval-Augmented Generation (RAG) system built using microservices for document ingestion, encoding, and orchestration.
 
 ## 🚀 Features
-- Microservice architecture with FastAPI
 
-- Encoder: Converts text to vector using fastembed
-
-- Orchestrator: Handles end-to-end RAG workflow
-
-- Dockerized for easy deployment
-
-- Run everything using docker-compose
+- 🧱 Microservice architecture using **FastAPI**
+- 🧠 **Encoder**: Converts text into vectors using `fastembed`
+- 🧩 **Orchestrator**: Handles end-to-end RAG workflow
+- 📥 **Ingestion**: Includes RabbitMQ-based document submission via producer; consumer runs separately
+- 🐳 Fully **Dockerized** for reproducible deployment
+- ⚡ Spin up the full system with **Docker Compose**
 
 ## 🐳 Running the app with Docker Compose
 
@@ -27,43 +25,47 @@ cd rag-in-a-box
 
 ```shell
 docker compose up --build
-```
 
-OR 
+# or, if using older Docker versions 
 
-```shell
 docker-compose up --build
 ```
 
 3.Access the services:
-- Submit a document to the orchestrator service: 
+- 🔁 Submit a document to the ingestion service (check RabbitMQ for the message):
 
 ```shell
-curl -X \
- POST http://localhost:8000/submit-document \
-     -H \
- "Content-Type: application/json" \
-     -d '{"document": "Some cats like Matcha, other cats meown't"}'
+curl --location 'http://localhost:8002/ingest' \
+ \
+--header 'Content-Type: application/json' \
+ \
+--data '{"text":"The Hot Rat Summer mosaic at Cal Anderson park shines in the sunlight."}' \
 
 ```
 
-- Ask a question:
+- 🧵 Start the consumer (to process and store in Qdrant):
+
+```shell
+uv run .\ingestion_worker.py
+```
+
+- ❓ Ask a question (handled by Orchestrator):
 
 ```shell
 curl -X \
  POST http://localhost:8000/ask \
      -H \
  "Content-Type: application/json" \
-     -d '{"query": "What do cats drink?"}'
+     -d '{"query": "What does summer in Seattle look like?"}'
 
 ```
 
-\* Check Notes section for error
+\* ⚠️ Note: See the Notes section below if you run into errors with Ollama.
 
 ## Following are the sequence charts - 
 
 ### User flow for submitting document
-![User flow for submitting document](/images/RAG_in_a_box_sequence_diags-2.drawio.png)
+![User flow for submitting document](/images/RAG_in_a_box_sequence_diags-1_ingestion.png)
 
 ### User flow for asking a question
 ![User flow for asking a question](/images/RAG_in_a_box_sequence_diags-3.drawio.png)
