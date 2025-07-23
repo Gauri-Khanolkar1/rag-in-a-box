@@ -17,6 +17,10 @@
 			"name": "📜 Scripts"
 		},
 		{
+			"path": "./ingest-worker",
+			"name": "📦 IngestionWorker"
+		},
+		{
 			"path": ".",
 			"name": "🫚 Root"
 		},

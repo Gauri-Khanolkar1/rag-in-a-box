@@ -1,19 +1,28 @@
 import json
+import os
+from typing import Self
 import uuid
 import pika
+import pika.exceptions
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from fastembed import TextEmbedding
+import tenacity
 
 
 class AppConfig:
-    QDRANT_URL = "http://localhost:6333"
+    QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333") 
     QDRANT_COLLECTION_NAME = "test"
     EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-    RABBITMQ_HOST = "localhost"
-    QUEUE_NAME = "ingestion_queue"
     VECTOR_SIZE = 384
     VECTOR_DISTANCE = Distance.COSINE
+    RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")
+    QUEUE_NAME = "ingestion_queue"
+    POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "localhost")
+    POSTGRES_PORT = os.environ.get("POSTGRES_PORT", "5432")
+    POSTGRES_DB = os.environ.get("POSTGRES_DB", "postgres")
+    POSTGRES_USER = os.environ.get("POSTGRES_USER", "postgres")
+    POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "mysecretpassword")
 
 
 class Application:
@@ -23,6 +32,16 @@ class Application:
         self.model = None
         self.connection = None
         self.channel = None
+
+    @tenacity.retry(
+            retry=tenacity.retry_if_exception_type(pika.exceptions.AMQPConnectionError), 
+            wait=tenacity.wait_fixed(3), 
+            stop=tenacity.stop_after_attempt(5)
+        )
+    def _connect_rabbitmq(self: Self) -> pika.BlockingConnection:
+        return pika.BlockingConnection(
+            pika.ConnectionParameters(self.config.RABBITMQ_HOST)
+        )
 
     def initialize_services(self):
         # Qdrant
@@ -40,9 +59,7 @@ class Application:
         self.model = TextEmbedding(self.config.EMBEDDING_MODEL_NAME)
 
         # RabbitMQ
-        self.connection = pika.BlockingConnection(
-            pika.ConnectionParameters(self.config.RABBITMQ_HOST)
-        )
+        self.connection = self._connect_rabbitmq()
         self.channel = self.connection.channel()
         self.channel.queue_declare(queue=self.config.QUEUE_NAME)
         self.channel.basic_qos(prefetch_count=1)

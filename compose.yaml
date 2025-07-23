@@ -14,10 +14,33 @@ services:
     ports:
       - "8002:8002"
     depends_on:
+      db:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
     environment:
       - RABBITMQ_HOST=rabbitmq
+      - POSTGRES_HOST=db
+  ingest-worker:
+    build:
+      context: ./ingest-worker
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    depends_on:
+      qdrant:
+        condition: service_started
+      encoder:
+        condition: service_started
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - POSTGRES_HOST=db
+      - QDRANT_URL=http://qdrant:6333
+      - ENCODER_URL=http://encoder:8001
   orchestrator:
     build:
       context: ./orchestrator
@@ -59,10 +82,34 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq # Persists RabbitMQ data
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 30s
-      timeout: 10s
+      interval: 5s
+      timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 5s
+  db:
+    image: postgres
+    restart: always
+    # set shared memory limit when using docker compose
+    shm_size: 128mb
+    # or set shared memory limit when deploy via swarm stack
+    #volumes:
+    #  - type: tmpfs
+    #    target: /dev/shm
+    #    tmpfs:
+    #      size: 134217728 # 128*2^20 bytes = 128Mb
+    environment:
+      POSTGRES_PASSWORD: mysecretpassword
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080
 
 volumes:
   qdrant_storage:

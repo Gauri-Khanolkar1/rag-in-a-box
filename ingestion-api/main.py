@@ -6,74 +6,118 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import pika
-from fastapi import FastAPI, Depends
-import pika.exceptions
+import psycopg2
+from fastapi import FastAPI
 from pydantic import BaseModel
 
 
 # ------------------------------
-# Configuration and Context
+# Configuration
 # ------------------------------
 
 class AppConfig:
-    RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")  # docker: "rabbitmq", local: "localhost"
+    RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")
     QUEUE_NAME = "ingestion_queue"
+    POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "localhost")
+    POSTGRES_PORT = os.environ.get("POSTGRES_PORT", "5432")
+    POSTGRES_DB = os.environ.get("POSTGRES_DB", "postgres")
+    POSTGRES_USER = os.environ.get("POSTGRES_USER", "postgres")
+    POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "mysecretpassword")
 
+
+# ------------------------------
+# Application Context
+# ------------------------------
 
 class AppContext:
     def __init__(self, config: AppConfig):
         self.config = config
-        self.connection: Optional[pika.BlockingConnection] = None
-        self.channel: Optional[pika.adapters.blocking_connection.BlockingChannel] = None
+        self.rabbit_conn: Optional[pika.BlockingConnection] = None
+        self.rabbit_channel: Optional[pika.adapters.blocking_connection.BlockingChannel] = None
+        self.pg_conn: Optional[psycopg2.extensions.connection] = None
+        self.pg_cursor: Optional[psycopg2.extensions.cursor] = None
 
-    def connect(self, retries=5, delay=3):
+    def connect_rabbitmq(self, retries=5, delay=3):
         for attempt in range(1, retries + 1):
             try:
-                self.connection = pika.BlockingConnection(
-                    pika.ConnectionParameters(self.config.RABBITMQ_HOST)
+                self.rabbit_conn = pika.BlockingConnection(
+                    pika.ConnectionParameters(self.config.RABBITMQ_HOST,
+                                              #heartbeat=30,
+                                              #blocked_connection_timeout=60
+                                              )
                 )
-                self.channel = self.connection.channel()
-                self.channel.queue_declare(self.config.QUEUE_NAME)
+                self.rabbit_channel = self.rabbit_conn.channel()
+                self.rabbit_channel.queue_declare(queue=self.config.QUEUE_NAME)
+                print(f"Connected to RabbitMQ (attempt {attempt})")
                 return
             except pika.exceptions.AMQPConnectionError as e:
-                print(f"RabbitMQ connection failed: {e}")
+                print(f"[RabbitMQ] Connection attempt {attempt} failed: {e}")
                 if attempt < retries:
-                    print(f"Retrying in {delay} seconds...")
                     time.sleep(delay)
                 else:
-                    print("Giving up on connecting to RabbitMQ.")
-                    raise
-
-
-    def close(self):
-        if self.connection and self.connection.is_open:
-            self.connection.close()
+                    raise RuntimeError("RabbitMQ is unavailable after multiple attempts.") from e
 
     def publish(self, message: dict):
-        if not self.channel:
+        if not self.rabbit_channel:
             raise RuntimeError("RabbitMQ channel is not initialized")
-        body = json.dumps(message)
-        self.channel.basic_publish(exchange='', routing_key=self.config.QUEUE_NAME, body=body)
+        self.rabbit_channel.basic_publish(
+            exchange='',
+            routing_key=self.config.QUEUE_NAME,
+            body=json.dumps(message)
+        )
+
+    def connect_postgres(self):
+        self.pg_conn = psycopg2.connect(
+            host=self.config.POSTGRES_HOST,
+            port=self.config.POSTGRES_PORT,
+            database=self.config.POSTGRES_DB,
+            user=self.config.POSTGRES_USER,
+            password=self.config.POSTGRES_PASSWORD
+        )
+        self.pg_cursor = self.pg_conn.cursor()
+        self.pg_cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ingestion_status (
+                id UUID PRIMARY KEY,
+                status TEXT CHECK (status IN ('IN_PROGRESS', 'COMPLETED', 'FAILED')),
+                error_message TEXT,
+                updated_at TIMESTAMP DEFAULT NOW()
+            );
+        ''')
+        self.pg_conn.commit()
+        print("Connected to PostgreSQL and ensured table exists.")
+
+    def close(self):
+        if self.rabbit_conn and self.rabbit_conn.is_open:
+            self.rabbit_conn.close()
+            print("RabbitMQ connection closed.")
+
+        if self.pg_cursor:
+            self.pg_cursor.close()
+        if self.pg_conn:
+            self.pg_conn.close()
+            print("PostgreSQL connection closed.")
 
 
-# Instantiate config and context globally
+# ------------------------------
+# Global Instances
+# ------------------------------
+
 app_config = AppConfig()
 app_context = AppContext(app_config)
 
 
 # ------------------------------
-# FastAPI App with Lifespan
+# FastAPI with Lifespan
 # ------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app_context.connect()
-    print(f"Connected to RabbitMQ at {app_config.RABBITMQ_HOST}")
     try:
+        app_context.connect_postgres()
+        app_context.connect_rabbitmq()
         yield
     finally:
         app_context.close()
-        print("RabbitMQ connection closed.")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -100,7 +144,33 @@ async def ingest(request: IngestRequest):
     token = str(uuid.uuid4())
     message = {"token": token, "doc": request.text}
 
-    app_context.publish(message)
-    print(f"Sent message to queue: {message}")
+    try:
+        app_context.publish(message)
+        print(f"Published message: {message}")
+
+        # Insert into DB with status IN_PROGRESS
+        app_context.pg_cursor.execute(
+            """
+            INSERT INTO ingestion_status (id, status)
+            VALUES (%s, %s)
+            """,
+            (token, 'IN_PROGRESS')
+        )
+        app_context.pg_conn.commit()
+        print(f"Inserted status IN_PROGRESS for token: {token}")
+
+    except Exception as e:
+        print(f"Publishing failed: {e}")
+
+        # Insert into DB with status FAILED
+        app_context.pg_cursor.execute(
+            """
+            INSERT INTO ingestion_status (id, status, error_message)
+            VALUES (%s, %s, %s)
+            """,
+            (token, 'FAILED', str(e))
+        )
+        app_context.pg_conn.commit()
+        print(f"Inserted status FAILED for token: {token}")
 
     return IngestResponse(token=token)
