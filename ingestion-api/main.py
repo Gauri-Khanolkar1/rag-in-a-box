@@ -3,11 +3,12 @@ import json
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Literal, Optional
 
 import pika
+import pika.exceptions
 import psycopg2
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 
@@ -42,8 +43,8 @@ class AppContext:
             try:
                 self.rabbit_conn = pika.BlockingConnection(
                     pika.ConnectionParameters(self.config.RABBITMQ_HOST,
-                                              #heartbeat=30,
-                                              #blocked_connection_timeout=60
+                                              heartbeat=30,
+                                              blocked_connection_timeout=6000
                                               )
                 )
                 self.rabbit_channel = self.rabbit_conn.channel()
@@ -75,6 +76,8 @@ class AppContext:
             password=self.config.POSTGRES_PASSWORD
         )
         self.pg_cursor = self.pg_conn.cursor()
+
+    def _create_postgres_table_if_not_exists(self):
         self.pg_cursor.execute('''
             CREATE TABLE IF NOT EXISTS ingestion_status (
                 id UUID PRIMARY KEY,
@@ -114,6 +117,7 @@ app_context = AppContext(app_config)
 async def lifespan(app: FastAPI):
     try:
         app_context.connect_postgres()
+        app_context._create_postgres_table_if_not_exists()
         app_context.connect_rabbitmq()
         yield
     finally:
@@ -130,10 +134,15 @@ app = FastAPI(lifespan=lifespan)
 class IngestRequest(BaseModel):
     text: str
 
-
 class IngestResponse(BaseModel):
     token: str
 
+class StatusRequest(BaseModel):
+    token: str
+
+class StatusResponse(BaseModel):
+    status: Literal["IN_PROGRESS", "FAILED", "COMPLETED"]
+    error_message: Optional[str] = None
 
 # ------------------------------
 # Route
@@ -174,3 +183,25 @@ async def ingest(request: IngestRequest):
         print(f"Inserted status FAILED for token: {token}")
 
     return IngestResponse(token=token)
+
+@app.post("/status", response_model=StatusResponse)
+async def status(request: StatusRequest):
+    # take the token from request and check for it exists in postgres and return the status in response
+    try:
+        app_context.pg_cursor.execute(
+            """
+            SELECT status FROM ingestion_status
+            WHERE id = (%s)
+            """,
+            (request.token,)
+        )
+        result = app_context.pg_cursor.fetchone()
+        # select returned empty then return wrong token error message to user
+        if status:
+            return StatusResponse(status=result[0])
+        else:
+            return StatusResponse(status=None, error_message="Wrong token")
+    except Exception as e:
+        # if select threw an exception? That means table does not exist?
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    
