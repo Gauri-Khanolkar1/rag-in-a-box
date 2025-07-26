@@ -38,34 +38,27 @@ class AppContext:
         self.pg_conn: Optional[psycopg2.extensions.connection] = None
         self.pg_cursor: Optional[psycopg2.extensions.cursor] = None
 
-    def connect_rabbitmq(self, retries=5, delay=3):
-        for attempt in range(1, retries + 1):
-            try:
-                self.rabbit_conn = pika.BlockingConnection(
-                    pika.ConnectionParameters(self.config.RABBITMQ_HOST,
-                                              heartbeat=30,
-                                              blocked_connection_timeout=6000
-                                              )
+    def publish(self, message: dict) -> None:
+        """Open a short-lived connection, publish, close - avoids heartbeat timeouts."""
+        try:
+            with pika.BlockingConnection(
+                pika.ConnectionParameters(
+                    self.config.RABBITMQ_HOST,
+                    heartbeat=0              # disable heartbeats for the short-lived conn
                 )
-                self.rabbit_channel = self.rabbit_conn.channel()
-                self.rabbit_channel.queue_declare(queue=self.config.QUEUE_NAME)
-                print(f"Connected to RabbitMQ (attempt {attempt})")
-                return
-            except pika.exceptions.AMQPConnectionError as e:
-                print(f"[RabbitMQ] Connection attempt {attempt} failed: {e}")
-                if attempt < retries:
-                    time.sleep(delay)
-                else:
-                    raise RuntimeError("RabbitMQ is unavailable after multiple attempts.") from e
-
-    def publish(self, message: dict):
-        if not self.rabbit_channel:
-            raise RuntimeError("RabbitMQ channel is not initialized")
-        self.rabbit_channel.basic_publish(
-            exchange='',
-            routing_key=self.config.QUEUE_NAME,
-            body=json.dumps(message)
-        )
+            ) as conn:
+                channel = conn.channel()
+                channel.queue_declare(queue=self.config.QUEUE_NAME)
+                channel.basic_publish(
+                    exchange='',
+                    routing_key=self.config.QUEUE_NAME,
+                    body=json.dumps(message),
+                    properties=pika.BasicProperties(
+                        delivery_mode=2      # make message persistent
+                    )
+                )
+        except pika.exceptions.AMQPError as e:
+            raise RuntimeError(f"RabbitMQ publish failed: {e}") from e
 
     def connect_postgres(self):
         self.pg_conn = psycopg2.connect(
@@ -118,7 +111,6 @@ async def lifespan(app: FastAPI):
     try:
         app_context.connect_postgres()
         app_context._create_postgres_table_if_not_exists()
-        app_context.connect_rabbitmq()
         yield
     finally:
         app_context.close()
