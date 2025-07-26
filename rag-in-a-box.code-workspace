@@ -24,6 +24,10 @@
 			"path": ".",
 			"name": "🫚 Root"
 		},
+		{
+			"path": "ingestion-api-integ-tests",
+			"name": "🧪 Ingestion Integration Tests"
+		}
 	],
 	"settings": {},
 	"tasks": {
@@ -56,7 +60,22 @@
 					"build & start"
 				],
 				"dependsOrder": "sequence"
+			},
+			{
+				"label": "test ingestion API",
+				"type": "shell",
+				"command": "uv",
+				"args": ["run", "pytest"],
+				"options": {
+					// run the tests from the integration‑test package directory
+					"cwd": "${workspaceFolder:🧪 Ingestion Integration Tests}"
+				},
+				"group": "test",
+				"presentation": {
+					"reveal": "always"
+				}
 			}
+
 		]
 	}
 }
