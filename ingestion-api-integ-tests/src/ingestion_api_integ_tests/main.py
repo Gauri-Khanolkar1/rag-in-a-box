@@ -21,6 +21,8 @@ POSTGRES_PORT = os.environ.get("POSTGRES_PORT", "5432")
 POSTGRES_DB = os.environ.get("POSTGRES_DB", "postgres")
 POSTGRES_USER = os.environ.get("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "mysecretpassword")
+QDRANT_HOST = os.environ.get("QDRANT_HOST", "localhost")
+QDRANT_PORT = 6333
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -56,20 +58,23 @@ def cleanup_ingestion() -> Generator[list[str], None, None]:
     tokens = []
     yield tokens  # give the test access to `tokens`
 
-    engine = create_engine(f'postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}')
-    Session = sessionmaker(bind=engine)
-    session = Session()
+    engine_postgres = create_engine(f'postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}')
+    Session_postgres = sessionmaker(bind=engine_postgres)
+    session_postgres = Session_postgres()
 
     if tokens:
         for token in tokens:
-            session.query(IngestionStatus).filter(IngestionStatus.id == token).delete()
+            session_postgres.query(IngestionStatus).filter(IngestionStatus.id == token).delete()
             logger.info(f"Record with token: {token} was removed from Database")
-        session.commit()
+
+            # TODO: add qdrant delete for the token in collection test
+            httpx.post(f"http://{QDRANT_HOST}:{QDRANT_PORT}/collections/{QDRANT_COLLECTION_NAME}/points/delete", json={'points': [token]})
+        session_postgres.commit()
 
 
 def test_ingestion_api_returns_uuid_token_on_successful_ingest(cleanup_ingestion: list[str]) -> None:
     
-    response = httpx.post(f"{INGESION_API_URL}/ingest", json={'text': 'abcdefg'})
+    response = httpx.post(f"{INGESION_API_URL}/ingest", json={'text': 'testing'})
     assert response.status_code == 200
     response_data: Mapping[str, Any] = response.json()
     assert 'token' in response_data.keys(), "IngestionAPI's submit-document call does not return any token"
